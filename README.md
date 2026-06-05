@@ -126,6 +126,17 @@ A small test console runs on Xavier at:
 http://192.168.0.124:18090
 ```
 
+This repo includes the console source under:
+
+```text
+console/
+├── server.py
+└── public/
+    ├── index.html
+    ├── styles.css
+    └── app.js
+```
+
 Remote files:
 
 ```text
@@ -153,6 +164,25 @@ The console supports:
 - Timing and token usage display
 
 The console proxies browser requests to `llama-server`, avoiding browser-side CORS issues.
+
+To run the console on Xavier:
+
+```bash
+cd /media/nvidia/sd/gemma4-e4b-console
+python3 server.py
+```
+
+By default, it listens on:
+
+```text
+0.0.0.0:18090
+```
+
+and proxies to:
+
+```text
+http://127.0.0.1:18084
+```
 
 ## Multimodal Request Formats
 
