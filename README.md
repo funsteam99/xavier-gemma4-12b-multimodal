@@ -1,148 +1,234 @@
-# Gemma 4 E4B Multimodal on Jetson Xavier
+# Gemma 4 12B Multimodal Trial on Jetson Xavier
 
-This repo documents a working Gemma 4 E4B multimodal setup on an NVIDIA Jetson Xavier using `llama.cpp`.
+本專案記錄在 NVIDIA Jetson Xavier 上使用 `llama.cpp` 執行 **Gemma 4 12B 多模態模型** 的實測狀態、安裝流程、前端測試工具與待解問題。
 
-The setup runs:
+這個 repo 建議對應 GitHub：
 
-- Gemma 4 E4B instruction model in GGUF format
-- Gemma 4 multimodal projector with image and audio encoder
-- `llama-server` with CUDA enabled
-- A lightweight browser test console for text, image, audio, ASR, and image+audio tests
+```text
+funsteam99/xavier-gemma4-12b-multimodal
+```
+
+先前已完成且較穩定的 E4B baseline 另存於：
+
+```text
+https://github.com/funsteam99/xavier-gemma4-e4b-multimodal.git
+```
+
+目前定位：
+
+- **Gemma 4 12B**：本 repo 主角，已成功載入並可測文字/多模態，但 audio/ASR 仍視為實驗性，不作正式採用。
+- **Gemma 4 E4B**：只作 baseline 參照；正式 E4B 紀錄請看 `xavier-gemma4-e4b-multimodal`。
 
 ## Hardware
 
-- Device: NVIDIA Jetson Xavier
-- Hostname: `ubuntu.local`
-- User: `nvidia`
-- RAM visible to system: about 14 GiB
-- CUDA device detected by llama.cpp:
-
 ```text
-Device 0: Xavier, compute capability 7.2, VRAM: 14886 MiB
+Device: NVIDIA Jetson Xavier
+Hostname: ubuntu.local
+User: nvidia
+RAM visible to system: about 14 GiB
+CUDA device: Xavier, compute capability 7.2
+CUDA memory reported by llama.cpp: 14886 MiB
 ```
 
-## Storage
-
-The model files are stored on the SD card:
-
-```text
-/media/nvidia/sd/models/gemma-4-e4b-it/
-```
-
-Known working files:
-
-```text
-gemma-4-E4B-it-Q4_K_M.gguf
-mmproj-gemma-4-E4B-it-Q8_0.gguf
-```
-
-The SD card was mounted at:
+模型與前端部署在 SD 卡：
 
 ```text
 /media/nvidia/sd
 ```
 
-## llama.cpp Version
-
-The working build is:
+`llama.cpp` 原始碼位置：
 
 ```text
-repo: /home/nvidia/src/llama.cpp
-commit: 0dedb9ef7
-version: 8881
-commit message: hexagon: add support for FILL op (#22198)
-build: GNU 10.5.0, Linux aarch64
+/home/nvidia/src/llama.cpp
 ```
 
-CUDA is enabled:
+本 repo 在 Xavier 上的工作目錄：
 
 ```text
-GGML_CUDA: ON
-CMAKE_CUDA_ARCHITECTURES: 72
-CUDA toolkit: 11.4.315
+/home/nvidia/XAVIER
 ```
 
-Runtime logs confirmed CUDA usage:
+## Model Focus
+
+### Gemma 4 12B
+
+12B 是本 repo 的主要測試目標。它已在 Xavier 上成功載入，使用新版 `llama.cpp`：
 
 ```text
-ggml_cuda_init: found 1 CUDA devices
-using device CUDA0 (Xavier)
-offloading 32 repeating layers to GPU
-offloaded 33/43 layers to GPU
-clip_ctx: CLIP using CUDA0 backend
-Flash Attention was auto, set to enabled
+llama.cpp version: 9522 (3ecfb150a)
 ```
 
-## Backend
-
-The backend runs on port `18084`:
-
-```bash
-/home/nvidia/src/llama.cpp/build/bin/llama-server \
-  -m /media/nvidia/sd/models/gemma-4-e4b-it/gemma-4-E4B-it-Q4_K_M.gguf \
-  --mmproj /media/nvidia/sd/models/gemma-4-e4b-it/mmproj-gemma-4-E4B-it-Q8_0.gguf \
-  --media-path /tmp \
-  --host 0.0.0.0 \
-  --port 18084 \
-  -c 4096 \
-  -b 2048 \
-  -ub 1024 \
-  -ngl 33 \
-  --threads 3 \
-  --parallel 1 \
-  --image-max-tokens 768 \
-  --cache-type-k q8_0 \
-  --cache-type-v q8_0 \
-  --cache-ram 0 \
-  --reasoning off \
-  --no-warmup
-```
-
-Health check:
-
-```bash
-curl http://127.0.0.1:18084/health
-```
-
-Expected response:
-
-```json
-{"status":"ok"}
-```
-
-Model capability check:
-
-```bash
-curl http://127.0.0.1:18084/v1/models
-```
-
-The model reports both completion and multimodal capability.
-
-## Initialization Script
-
-This repo includes an Xavier-side initialization script:
+模型檔：
 
 ```text
-scripts/init-xavier.sh
+/media/nvidia/sd/models/gemma-4-12b-it/
+  gemma-4-12B-it-Q4_K_M.gguf
+  mmproj-gemma-4-12B-it-Q8_0.gguf
 ```
 
-After cloning the repo on Xavier, run:
+服務：
+
+```text
+Backend: http://ubuntu.local:18085
+Console: http://ubuntu.local:18091
+```
+
+目前 12B 啟動設定：
+
+```text
+n_ctx: 4096
+batch: 1024
+ubatch: 1024
+parallel: 1
+image_max_tokens: 768
+```
+
+載入後記憶體大約：
+
+```text
+RAM used: about 9 GiB
+RAM available: about 4 to 5 GiB
+Swap used: small, about 80 to 100 MiB
+```
+
+12B 文字 smoke test 成功，但速度較慢：
+
+```text
+Prompt eval: about 5.3 tokens/second
+Generation: about 3.5 tokens/second
+```
+
+重要限制：12B 的 audio/ASR 暫不作正式採用。`llama.cpp` runtime log 明確顯示：
+
+```text
+init_audio: audio input is in experimental stage and may have reduced quality
+```
+
+實測 ASR 會出現尾端重複片段。前端已加入保守 ASR prompt、`temperature: 0`、`repeat_penalty: 1.18`、ASR 預設 `max_tokens: 160`，但這只是緩解，不代表穩定。
+
+### E4B Baseline
+
+E4B 是先前完成的較穩定版本，速度較適合 Xavier 日常互動。此 repo 只保留 E4B 作比較基準，完整 E4B 專案請看：
+
+```text
+https://github.com/funsteam99/xavier-gemma4-e4b-multimodal.git
+```
+
+已知 E4B 服務配置：
+
+```text
+Backend: http://ubuntu.local:18084
+Console: http://ubuntu.local:18090
+```
+
+代表性效能：
+
+```text
+Image processing: about 2 to 6.7 seconds
+Audio processing: about 1.5 to 3.6 seconds
+Prompt eval: about 60 to 103 tokens/second
+Text generation: about 4.5 to 5.3 tokens/second
+```
+
+## Initial Install
+
+以下操作在 Xavier 上執行。
+
+### 1. 準備 `llama.cpp`
 
 ```bash
+mkdir -p /home/nvidia/src
+cd /home/nvidia/src
+git clone https://github.com/ggml-org/llama.cpp.git
+cd llama.cpp
+```
+
+如果已經有 repo，更新：
+
+```bash
+cd /home/nvidia/src/llama.cpp
+git pull --ff-only
+```
+
+設定 CUDA build：
+
+```bash
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=72
+```
+
+Xavier 記憶體有限，編譯不要用無限制 `-j`。建議：
+
+```bash
+cmake --build build -j2 --target llama-server llama-cli
+```
+
+如果記憶體吃緊，改用：
+
+```bash
+cmake --build build -j1 --target llama-server llama-cli
+```
+
+確認版本：
+
+```bash
+/home/nvidia/src/llama.cpp/build/bin/llama-server --version
+```
+
+### 2. 放置模型
+
+E4B：
+
+```bash
+mkdir -p /media/nvidia/sd/models/gemma-4-e4b-it
+```
+
+12B：
+
+```bash
+mkdir -p /media/nvidia/sd/models/gemma-4-12b-it
+cd /media/nvidia/sd/models/gemma-4-12b-it
+
+wget -c -O gemma-4-12B-it-Q4_K_M.gguf \
+  https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12B-it-Q4_K_M.gguf
+
+wget -c -O mmproj-gemma-4-12B-it-Q8_0.gguf \
+  https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF/resolve/main/mmproj-gemma-4-12B-it-Q8_0.gguf
+```
+
+下載前後建議檢查：
+
+```bash
+free -h
+df -h /media/nvidia/sd
+```
+
+### 3. 部署本 repo
+
+將本 repo 放在 Xavier：
+
+```text
+/home/nvidia/XAVIER
+```
+
+確認腳本可執行：
+
+```bash
+cd /home/nvidia/XAVIER
 chmod +x scripts/init-xavier.sh
+chmod +x scripts/init-xavier-12b.sh
+```
+
+## Running Services
+
+### E4B Baseline
+
+```bash
+cd /home/nvidia/XAVIER
 ./scripts/init-xavier.sh check
 ./scripts/init-xavier.sh start
 ```
 
-The `start` command:
-
-- validates `llama.cpp`, model, and mmproj paths
-- copies the console files to `/media/nvidia/sd/gemma4-e4b-console`
-- starts or restarts `llama-server` on port `18084`
-- starts or restarts the console on port `18090`
-- prints backend and console health checks
-
-Useful commands:
+常用命令：
 
 ```bash
 ./scripts/init-xavier.sh status
@@ -151,84 +237,110 @@ Useful commands:
 ./scripts/init-xavier.sh start-console
 ```
 
-The script defaults match the working Xavier setup. Paths can be overridden:
+### 12B
 
 ```bash
-MODEL=/path/to/model.gguf \
-MMPROJ=/path/to/mmproj.gguf \
-LLAMA_CPP_DIR=/home/nvidia/src/llama.cpp \
-./scripts/init-xavier.sh start
+cd /home/nvidia/XAVIER
+./scripts/init-xavier-12b.sh check
+./scripts/init-xavier-12b.sh start
 ```
 
-## Test Console
+常用命令：
 
-A small test console runs on Xavier at:
+```bash
+./scripts/init-xavier-12b.sh status
+./scripts/init-xavier-12b.sh stop
+./scripts/init-xavier-12b.sh start-backend
+./scripts/init-xavier-12b.sh start-console
+```
+
+12B 可用環境變數調整：
+
+```bash
+CTX_SIZE=4096 \
+BATCH_SIZE=1024 \
+UBATCH_SIZE=1024 \
+IMAGE_MAX_TOKENS=768 \
+./scripts/init-xavier-12b.sh start
+```
+
+如果遇到 context 不足：
 
 ```text
-http://192.168.0.124:18090
+request (...) exceeds the available context size
 ```
 
-This repo includes the console source under:
+提高 `CTX_SIZE`。目前 12B 預設是 `4096`。
 
-```text
-console/
-├── server.py
-└── public/
-    ├── index.html
-    ├── styles.css
-    └── app.js
+## Health Checks
+
+Backend：
+
+```bash
+curl http://127.0.0.1:18084/health
+curl http://127.0.0.1:18085/health
 ```
 
-Remote files:
+Models：
 
-```text
-/media/nvidia/sd/gemma4-e4b-console/server.py
-/media/nvidia/sd/gemma4-e4b-console/public/index.html
-/media/nvidia/sd/gemma4-e4b-console/public/styles.css
-/media/nvidia/sd/gemma4-e4b-console/public/app.js
+```bash
+curl http://127.0.0.1:18084/v1/models
+curl http://127.0.0.1:18085/v1/models
 ```
 
-Logs:
+Console：
 
-```text
-/tmp/gemma4_e4b_console.log
-/tmp/llama_gemma4_e4b.log
+```bash
+curl -fsS -X POST -H "Content-Type: application/json" -d "{}" \
+  http://127.0.0.1:18090/api/health
+
+curl -fsS -X POST -H "Content-Type: application/json" -d "{}" \
+  http://127.0.0.1:18091/api/health
 ```
 
-The console supports:
+Memory：
 
-- Text baseline prompts
+```bash
+free -h
+tegrastats --interval 1000
+```
+
+## Frontend Console
+
+前端是輕量瀏覽器測試台，由 Python HTTP server 提供靜態頁面並代理到 `llama-server`，避免瀏覽器 CORS 問題。
+
+主要功能：
+
+- Backend health check
+- Model capability display
+- Text prompt baseline
 - Image OCR
-- Chart and UI understanding
+- Chart / UI understanding
 - ASR audio transcription
-- Image + audio multimodal prompts
+- Image + audio combined prompt
 - Raw JSON inspection
-- Timing and token usage display
+- Response time
+- Prompt tokens / output tokens
+- Estimated output tok/s
 
-The console proxies browser requests to `llama-server`, avoiding browser-side CORS issues.
-
-To run the console on Xavier:
-
-```bash
-cd /media/nvidia/sd/gemma4-e4b-console
-python3 server.py
-```
-
-By default, it listens on:
+支援輸入格式：
 
 ```text
-0.0.0.0:18090
+Images: PNG, JPG, JPEG, WebP
+Audio: WAV, MP3
 ```
 
-and proxies to:
+不支援：
 
 ```text
-http://127.0.0.1:18084
+webm
+m4a
+browser default recording formats that are not WAV/MP3
 ```
 
-## Multimodal Request Formats
+### Request Formats
 
-Image input uses OpenAI-compatible `image_url` content parts:
+圖片：
 
 ```json
 {
@@ -239,7 +351,7 @@ Image input uses OpenAI-compatible `image_url` content parts:
 }
 ```
 
-Audio input uses `input_audio` content parts:
+音訊：
 
 ```json
 {
@@ -251,34 +363,25 @@ Audio input uses `input_audio` content parts:
 }
 ```
 
-The tested llama.cpp build accepts audio formats:
-
-- `wav`
-- `mp3`
-
-It does not accept `webm`, `m4a`, or arbitrary browser recording formats through this path.
-
 ## Important Fixes
 
 ### Image Batch Assert
 
-An image upload originally crashed `llama-server` with:
+曾遇到圖片上傳造成：
 
 ```text
 GGML_ASSERT((cparams.causal_attn || cparams.n_ubatch >= n_tokens_all) && "non-causal attention requires n_ubatch >= n_tokens") failed
 ```
 
-The image produced about `748` image tokens while the default physical batch size was `512`.
+原因是圖片 token 數超過 physical batch。修正：
 
-Fix:
-
-```bash
+```text
 -ub 1024
 ```
 
 ### Invalid Media Decode
 
-Some failed uploads returned:
+錯誤：
 
 ```json
 {
@@ -290,99 +393,79 @@ Some failed uploads returned:
 }
 ```
 
-The backend log showed:
+常見原因：
+
+- 把音訊拖到圖片區
+- 使用不支援的圖片格式
+- 使用不支援的音訊格式
+
+前端已限制圖片與音訊上傳區的格式。
+
+### Context Too Small
+
+錯誤：
 
 ```text
-mtmd_helper_bitmap_init_from_buf: failed to decode image bytes
+request (...) exceeds the available context size
 ```
 
-This happened when non-image bytes were sent as an `image_url` content part, such as dragging audio into the image upload area or using an unsupported image format.
-
-Fixes added to the test console:
-
-- Image upload accepts only PNG, JPG, JPEG, or WebP
-- Audio upload accepts only WAV or MP3
-- Dragging files into the wrong zone is blocked before sending to `llama-server`
-
-### ASR Support
-
-The multimodal projector reports:
+12B 多模態請求容易超過 `2048` context，目前 12B 預設已改為：
 
 ```text
-has vision encoder
-has audio encoder
+CTX_SIZE=4096
 ```
 
-Audio input is experimental in llama.cpp:
+## Pending Issues
 
-```text
-init_audio: audio input is in experimental stage and may have reduced quality
-```
+### 1. 12B ASR/audio 等待正式支援
 
-ASR works through the same chat completions endpoint by sending an `input_audio` content part and prompting the model to transcribe.
+目前 `llama.cpp` audio input 仍標示 experimental。12B ASR 會出現尾端重複片段，因此 12B audio/ASR 只保留為測試功能。
 
-## Observed Performance
+目前決策：
 
-This setup is usable but slow on Xavier.
+- E4B 繼續作為可用 baseline
+- 12B 可測文字、圖片理解、OCR、較難推理
+- 12B ASR/audio 等待 `llama.cpp` 後續正式支援或更穩定 runtime
 
-Representative timings:
+### 2. 12B 記憶體餘裕有限
 
-```text
-Image processing: about 2 to 6.7 seconds
-Audio processing: about 1.5 to 3.6 seconds
-Prompt eval: about 60 to 103 tokens/second, depending on multimodal token count
-Text generation: about 4.5 to 5.3 tokens/second
-```
-
-Long answers are the slowest part. Generating 256 tokens can take close to one minute.
-
-Practical tuning options:
-
-- Reduce `max_tokens`
-- Use smaller images
-- Lower `--image-max-tokens`
-- Keep `--parallel 1`
-- Keep `-ub 1024` for larger image inputs
-- Consider smaller or more aggressively quantized models for faster interaction
-
-## Quick Test Payloads
-
-Text:
+12B Q4_K_M 載入後約使用 9 GiB RAM，Xavier 剩約 4 到 5 GiB 可用。啟動前、長任務前、調高 context 前都要先查：
 
 ```bash
-curl http://127.0.0.1:18084/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma-4-E4B-it-Q4_K_M.gguf",
-    "messages": [
-      {
-        "role": "user",
-        "content": "請用繁體中文簡短回答：你正在 Jetson Xavier 上運作嗎？"
-      }
-    ],
-    "max_tokens": 64,
-    "temperature": 0.2
-  }'
+free -h
+tegrastats --interval 1000
 ```
 
-Image and audio requests are easiest to test through the browser console because it converts local files to base64.
+### 3. 12B 速度慢
 
-## Current Status
+12B 在 Xavier 上可跑，但生成速度約 3 到 4 tok/s。長回答會很慢，建議：
 
-Working:
+- `max_tokens` 控制在 64 到 256
+- ASR 控制在 96 到 160
+- 圖片先用小圖
+- `--parallel 1`
 
-- CUDA-enabled llama.cpp build
-- Gemma 4 E4B text generation
-- Image input
-- Audio input
-- ASR-style transcription prompts
-- Image + audio combined prompts
-- Browser test console on Xavier
+### 4. Frontend 可再加強
 
-Known limitations:
+待做：
 
-- Slow token generation on Xavier
-- Audio support is experimental in llama.cpp
-- Audio upload is limited to WAV and MP3
-- Image upload is limited to PNG, JPG, JPEG, and WebP
-- Very large images increase image token count and latency
+- ASR 重複片段偵測與截斷
+- 顯示目前 context limit
+- 顯示目前 request token 估算
+- 測試紀錄匯出
+- 針對 E4B / 12B 的比較頁
+
+## Current Recommendation
+
+本 repo 的主線是 `Gemma 4 12B` 在 Xavier 上的可行性與多模態 trial。
+
+日常互動與 ASR 目前仍先用 E4B baseline。
+
+12B 保留為獨立 trial service，用於：
+
+- 較難 OCR
+- 圖片/介面理解
+- 多步驟推理
+- 文字品質比較
+
+12B audio/ASR 暫時等待 `llama.cpp` 正式穩定後再評估。

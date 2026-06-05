@@ -1,8 +1,91 @@
 <!doctype html>
 <html lang="zh-Hant">
-<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Gemma 4 E4B Test Console</title><link rel="stylesheet" href="/styles.css" /></head>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gemma 4 Test Console</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
 <body>
-<main class="shell">
-<header class="topbar"><div><p class="eyebrow">XAVIER / llama.cpp / image + audio</p><h1>Gemma 4 E4B 測試前台</h1></div><div class="status-grid"><button id="checkBtn" title="檢查後端狀態">Check</button><div class="status"><span>Backend</span><strong id="healthText">unknown</strong></div><div class="status"><span>Latency</span><strong id="latencyText">-</strong></div><div class="status"><span>Model</span><strong id="modelText">E4B</strong></div></div></header>
-<section class="bench"><form id="testForm" class="panel input-panel"><div class="row split"><label>Preset<select id="preset"><option value="asr">ASR 語音轉文字</option><option value="text">文字基準測試</option><option value="ocr">圖片 OCR</option><option value="chart">圖表 / UI 理解</option><option value="av">圖片 + 語音</option><option value="free">自由提示</option></select></label><label>Max tokens<input id="maxTokens" type="number" min="32" max="1024" step="32" value="256" /></label></div><label>Prompt<textarea id="prompt" spellcheck="false"></textarea></label><div class="media-grid"><div class="dropzone" id="imageDropzone"><input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp" /><div><strong id="imageTitle">拖放或選擇圖片</strong><span>PNG / JPG / WebP，會以 image_url data URL 送進 llama.cpp</span></div><img id="preview" alt="image preview" hidden /></div><div class="dropzone audio-zone" id="audioDropzone"><input id="audioInput" type="file" accept="audio/wav,audio/x-wav,audio/mpeg,audio/mp3,.wav,.mp3" /><div><strong id="audioTitle">拖放或選擇語音</strong><span>WAV / MP3，會以 input_audio base64 送進 llama.cpp</span></div><audio id="audioPreview" controls hidden></audio></div></div><div class="actions"><button type="submit" class="primary">Run Test</button><button type="button" id="clearImage">Clear Image</button><button type="button" id="clearAudio">Clear Audio</button><button type="button" id="clearAll">Reset</button></div></form><section class="panel result-panel"><div class="meter-grid"><div><span>Response</span><strong id="responseTime">-</strong></div><div><span>Prompt tokens</span><strong id="promptTokens">-</strong></div><div><span>Output tokens</span><strong id="outputTokens">-</strong></div><div><span>Tok/s</span><strong id="tokRate">-</strong></div></div><div class="answer" id="answer">尚未執行測試。</div><details class="raw"><summary>Raw JSON</summary><pre id="rawJson">{}</pre></details></section></section>
-</main><script src="/app.js"></script></body></html>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">XAVIER / llama.cpp / image + audio</p>
+        <h1 id="titleText">Gemma 4 測試前台</h1>
+      </div>
+      <div class="status-grid">
+        <button id="checkBtn" title="檢查後端狀態">Check</button>
+        <div class="status"><span>Backend</span><strong id="healthText">unknown</strong></div>
+        <div class="status"><span>Latency</span><strong id="latencyText">-</strong></div>
+        <div class="status"><span>Model</span><strong id="modelText">-</strong></div>
+      </div>
+    </header>
+
+    <section class="bench">
+      <form id="testForm" class="panel input-panel">
+        <div class="row split">
+          <label>Preset
+            <select id="preset">
+              <option value="asr">ASR 音訊轉寫</option>
+              <option value="text">文字基準測試</option>
+              <option value="ocr">圖片 OCR</option>
+              <option value="chart">圖表 / UI 理解</option>
+              <option value="av">圖片 + 音訊</option>
+              <option value="free">自由輸入</option>
+            </select>
+          </label>
+          <label>Max tokens
+            <input id="maxTokens" type="number" min="32" max="1024" step="32" value="256" />
+          </label>
+        </div>
+
+        <label>Prompt
+          <textarea id="prompt" spellcheck="false"></textarea>
+        </label>
+
+        <div class="media-grid">
+          <div class="dropzone" id="imageDropzone">
+            <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp" />
+            <div>
+              <strong id="imageTitle">選擇圖片</strong>
+              <span>PNG / JPG / WebP，送入 llama.cpp 的 image_url data URL。</span>
+            </div>
+            <img id="preview" alt="image preview" hidden />
+          </div>
+
+          <div class="dropzone audio-zone" id="audioDropzone">
+            <input id="audioInput" type="file" accept="audio/wav,audio/x-wav,audio/mpeg,audio/mp3,.wav,.mp3" />
+            <div>
+              <strong id="audioTitle">選擇音訊</strong>
+              <span>WAV / MP3，送入 llama.cpp 的 input_audio base64。</span>
+            </div>
+            <audio id="audioPreview" controls hidden></audio>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="primary">Run Test</button>
+          <button type="button" id="clearImage">Clear Image</button>
+          <button type="button" id="clearAudio">Clear Audio</button>
+          <button type="button" id="clearAll">Reset</button>
+        </div>
+      </form>
+
+      <section class="panel result-panel">
+        <div class="meter-grid">
+          <div><span>Response</span><strong id="responseTime">-</strong></div>
+          <div><span>Prompt tokens</span><strong id="promptTokens">-</strong></div>
+          <div><span>Output tokens</span><strong id="outputTokens">-</strong></div>
+          <div><span>Tok/s</span><strong id="tokRate">-</strong></div>
+        </div>
+        <div class="answer" id="answer">準備測試。</div>
+        <details class="raw">
+          <summary>Raw JSON</summary>
+          <pre id="rawJson">{}</pre>
+        </details>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

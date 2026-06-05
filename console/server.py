@@ -10,6 +10,8 @@ import time
 ROOT = Path(__file__).resolve().parent / "public"
 BACKEND = os.environ.get("GEMMA_BACKEND", "http://127.0.0.1:18084").rstrip("/")
 PORT = int(os.environ.get("PORT", "18090"))
+APP_TITLE = os.environ.get("APP_TITLE", "Gemma 4 E4B Test Console")
+MODEL_HINT = os.environ.get("MODEL_HINT", "gemma-4-E4B-it-Q4_K_M.gguf")
 MAX_BODY = 96 * 1024 * 1024
 
 MIMES = {
@@ -24,7 +26,7 @@ MIMES = {
 }
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Gemma4E4BConsole/1.0"
+    server_version = "Gemma4Console/1.1"
 
     def log_message(self, fmt, *args):
         print("[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), fmt % args), flush=True)
@@ -81,6 +83,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/health":
                 code, payload = self._backend("GET", "/health", timeout=10)
                 self._json(code, payload)
+            elif self.path == "/api/config":
+                self._json(200, {"ok": True, "app_title": APP_TITLE, "model_hint": MODEL_HINT})
             elif self.path == "/api/models":
                 code, payload = self._backend("GET", "/v1/models", timeout=20)
                 self._json(code, payload)
@@ -108,5 +112,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     httpd = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"Gemma 4 E4B console on 0.0.0.0:{PORT}, backend={BACKEND}", flush=True)
+    print(f"{APP_TITLE} on 0.0.0.0:{PORT}, backend={BACKEND}", flush=True)
     httpd.serve_forever()
