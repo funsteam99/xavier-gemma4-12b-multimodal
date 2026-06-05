@@ -118,6 +118,48 @@ curl http://127.0.0.1:18084/v1/models
 
 The model reports both completion and multimodal capability.
 
+## Initialization Script
+
+This repo includes an Xavier-side initialization script:
+
+```text
+scripts/init-xavier.sh
+```
+
+After cloning the repo on Xavier, run:
+
+```bash
+chmod +x scripts/init-xavier.sh
+./scripts/init-xavier.sh check
+./scripts/init-xavier.sh start
+```
+
+The `start` command:
+
+- validates `llama.cpp`, model, and mmproj paths
+- copies the console files to `/media/nvidia/sd/gemma4-e4b-console`
+- starts or restarts `llama-server` on port `18084`
+- starts or restarts the console on port `18090`
+- prints backend and console health checks
+
+Useful commands:
+
+```bash
+./scripts/init-xavier.sh status
+./scripts/init-xavier.sh stop
+./scripts/init-xavier.sh start-backend
+./scripts/init-xavier.sh start-console
+```
+
+The script defaults match the working Xavier setup. Paths can be overridden:
+
+```bash
+MODEL=/path/to/model.gguf \
+MMPROJ=/path/to/mmproj.gguf \
+LLAMA_CPP_DIR=/home/nvidia/src/llama.cpp \
+./scripts/init-xavier.sh start
+```
+
 ## Test Console
 
 A small test console runs on Xavier at:
