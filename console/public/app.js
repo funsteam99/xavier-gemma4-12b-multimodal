@@ -185,7 +185,7 @@ function buildPayload() {
     temperature: isAudioTask ? 0 : 0.2,
     repeat_penalty: isAudioTask ? 1.18 : 1.08,
     max_tokens: Number(el("maxTokens").value || 256),
-    stream: false,
+    stream: true,
   };
 }
 
@@ -198,24 +198,76 @@ async function runTest(event) {
 
   setBusy(true);
   el("answer").className = "answer";
-  el("answer").textContent = "Running...";
+  el("answer").textContent = "";
   el("responseTime").textContent = "-";
   el("promptTokens").textContent = "-";
   el("outputTokens").textContent = "-";
   el("tokRate").textContent = "-";
 
+  const started = performance.now();
   try {
-    const data = await postJson("/api/chat", { payload: buildPayload() });
-    renderRaw(data);
-    const choice = data?.data?.choices?.[0]?.message?.content;
-    const usage = data?.data?.usage || {};
-    const latency = data.latency_ms || data.client_latency_ms;
-    el("answer").textContent = choice || JSON.stringify(data?.data || data, null, 2);
+    const payload = buildPayload();
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payload }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      let errPayload;
+      try {
+        errPayload = JSON.parse(text);
+      } catch (e) {}
+      throw new Error(errPayload?.error || `HTTP error ${res.status}: ${text}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let choiceText = "";
+    let lastData = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop(); // Keep incomplete line
+
+      for (const line of lines) {
+        const cleaned = line.trim();
+        if (!cleaned) continue;
+        if (cleaned.startsWith("data: ")) {
+          const dataStr = cleaned.slice(6).trim();
+          if (dataStr === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(dataStr);
+            lastData = parsed;
+            const delta = parsed?.choices?.[0]?.delta;
+            if (delta && delta.content) {
+              choiceText += delta.content;
+              el("answer").textContent = choiceText;
+            }
+          } catch (e) {
+            // Ignore incomplete JSON chunks
+          }
+        }
+      }
+    }
+
+    const latency = Math.round(performance.now() - started);
     el("responseTime").textContent = `${latency} ms`;
+
+    // In streaming, llama.cpp returns usage in the last data chunk before DONE
+    const usage = lastData?.usage || {};
     el("promptTokens").textContent = usage.prompt_tokens ?? "-";
     el("outputTokens").textContent = usage.completion_tokens ?? "-";
     el("tokRate").textContent = usage.completion_tokens && latency ? (usage.completion_tokens / (latency / 1000)).toFixed(2) : "-";
-    setHealth(Boolean(data.ok), data.ok ? "ok" : "error", data.latency_ms);
+
+    renderRaw(lastData || { ok: true });
+    setHealth(true, "ok", latency);
   } catch (error) {
     showMessage(String(error), "bad");
     renderRaw({ ok: false, error: String(error) });

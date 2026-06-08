@@ -75,6 +75,31 @@ class Handler(BaseHTTPRequestHandler):
         except URLError as err:
             return 502, {"ok": False, "latency_ms": round((time.time() - started) * 1000), "backend": BACKEND, "error": str(err)}
 
+    def _proxy_stream(self, method, path, payload, timeout=360):
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = Request(BACKEND + path, data=data, method=method)
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urlopen(req, timeout=timeout) as res:
+                self.send_response(res.status)
+                for k, v in res.getheaders():
+                    if k.lower() in ("content-type", "transfer-encoding", "cache-control", "connection"):
+                        self.send_header(k, v)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                while True:
+                    chunk = res.readline()
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+        except HTTPError as err:
+            text = err.read().decode("utf-8", errors="replace")
+            self._json(err.code, {"ok": False, "error": text})
+        except Exception as exc:
+            self._json(502, {"ok": False, "error": str(exc)})
+
     def do_OPTIONS(self):
         self._headers(204)
 
@@ -90,8 +115,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(code, payload)
             elif self.path == "/api/chat":
                 body = self._read_json()
-                code, payload = self._backend("POST", "/v1/chat/completions", body.get("payload", {}), timeout=360)
-                self._json(code, payload)
+                payload = body.get("payload", {})
+                is_stream = payload.get("stream", False)
+                if is_stream:
+                    self._proxy_stream("POST", "/v1/chat/completions", payload, timeout=360)
+                else:
+                    code, res_payload = self._backend("POST", "/v1/chat/completions", payload, timeout=360)
+                    self._json(code, res_payload)
             else:
                 self._json(404, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:
