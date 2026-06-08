@@ -1,0 +1,15 @@
+[Unit]
+Description=Gemma-4-12b llama-server Backend on Port 18085
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nvidia/src/llama.cpp
+ExecStart=/home/nvidia/src/llama.cpp/build/bin/llama-server -m /media/nvidia/sd/models/gemma-4-12b-it/gemma-4-12B-it-Q4_K_M.gguf --mmproj /media/nvidia/sd/models/gemma-4-12b-it/mmproj-gemma-4-12B-it-Q8_0.gguf --media-path /tmp --host 0.0.0.0 --port 18085 -c 4096 -b 1024 -ub 1024 -ngl 99 --threads 3 --parallel 1 --image-max-tokens 768 --cache-type-k q8_0 --cache-type-v q8_0 --cache-ram 0 --reasoning off --no-warmup
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

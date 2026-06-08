@@ -48,6 +48,15 @@ CUDA memory reported by llama.cpp: 14886 MiB
 /home/nvidia/XAVIER
 ```
 
+> [!IMPORTANT]
+> **⚠️ 關於前端控制台 (Console) 的開發與部署目錄說明：**
+> * **開發與 Git 版控目錄**：`/home/nvidia/XAVIER/console`
+>   * 這是您實際修改網頁代碼（`server.py`、`index.html` 等）與進行 Git/GitHub 版本控制的地方。
+> * **實際運行部署目錄**：`/media/nvidia/sd/gemma4-12b-console`
+>   * 這是 Systemd 服務或啟動腳本實際執行運作的地方（位於 SD 卡上）。
+> * **同步機制**：每次啟動/重啟服務時，腳本會**自動將開發目錄下的最新代碼複製並覆蓋到 SD 卡上的運行目錄**。
+> * **注意事項**：請**不要**直接去修改 SD 卡路徑下的程式碼，否則修改會被自動覆蓋且不會被 Git 追蹤。請一律在 `/home/nvidia/XAVIER/console` 進行修改。
+
 ## Model Focus
 
 ### Gemma 4 12B
