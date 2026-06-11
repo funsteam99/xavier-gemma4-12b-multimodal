@@ -475,15 +475,25 @@ tegrastats --interval 1000
 - 測試紀錄匯出
 - 針對 E4B / 12B 的比較頁
 
-### 5. QAT + MTP Xavier 評估
+### 5. QAT + MTP 效能對比評估 (Xavier vs Mac)
 
-Mac 上的 QAT Q4_0 + MTP speculative decoding 實驗回報約 12.68 tok/s，已整理成 Xavier 移植評估：
+為了評估 Jetson Xavier 的移植效能與瓶頸，以下整理了 **Gemma 4 12B QAT (Q4_0) + MTP (Q8_0)** 在 Jetson Xavier 與 Apple Silicon Mac 上的對比數據：
 
-```text
-docs/mac-qat-mtp-reference.md
-```
+| 評估維度 / 平台 | NVIDIA Jetson Xavier | Apple Silicon Mac (參照基準) |
+| :--- | :--- | :--- |
+| **硬體核心** | 8核 Carmel ARM CPU, 512核 Volta GPU | Apple Silicon (如 M 系列 Max/Pro) |
+| **統一記憶體與頻寬** | ~14.8 GiB 統一記憶體 @ **137 GB/s** | 統一記憶體 @ **150 ~ 400+ GB/s** |
+| **KV Cache 設定** | 優化量化 `q4_0` (大幅節省 VRAM 佔用) | 預設 `q8_0` 或 `f16` |
+| **記憶體管理方式** | 停用 VMM (`-DGGML_CUDA_NO_VMM=ON`) | 啟用預設 VMM 虛擬記憶體池 |
+| **Text Generation 速度**| **3.85 t/s** (2026-06-11 實測) | **12.68 t/s** (投機解碼實驗數據) |
+| **ASR 語音辨識速度** | **3.98 t/s** (297 tokens WAV) | N/A (一般不限於邊緣 ASR 推理) |
+| **部署狀態與限制** | 透過 systemd 用戶服務常駐後端與控制台 | 本機開發端/命令列測試 |
 
-三個模型已下載至獨立目錄。Xavier 尚未完成首次 QAT/MTP benchmark；後續測試必須在每個步驟前後檢查 RAM、swap 與 `tegrastats`。
+> [!NOTE]
+> *   **效能差距主因**：Xavier 的生成速度約為 Mac 的 **30.4%**。這主要受限於 Xavier 的記憶體頻寬（137 GB/s）與硬體代次（Volta 架構，無專用 Tensor Cores 優化多模態投影）。
+> *   **記憶體取捨**：Xavier 必須使用 `q4_0` KV Cache 並編譯關閉 VMM 才能避免 OOM，這對速度有微幅影響，但確保了在 14.8 GiB 記憶體下的穩定運行。
+> *   詳細評估報告與建置歷史請參閱 [gemma-4-12b-xavier-eval.md](file:///C:/Users/pondahai/gemma-4-12b-xavier-eval.md)。
+
 
 ## Current Recommendation
 
