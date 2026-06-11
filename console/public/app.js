@@ -286,6 +286,7 @@ function buildPayload() {
     repeat_penalty: isAudioTask ? 1.18 : 1.08,
     max_tokens: Number(el("maxTokens").value || 256),
     stream: true,
+    stream_options: { include_usage: true },
   };
 }
 
@@ -327,6 +328,8 @@ async function runTest(event) {
     let buffer = "";
     let choiceText = "";
     let lastData = null;
+    let finalUsage = null;
+    let finalTimings = null;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -345,6 +348,8 @@ async function runTest(event) {
           try {
             const parsed = JSON.parse(dataStr);
             lastData = parsed;
+            if (parsed.usage) finalUsage = parsed.usage;
+            if (parsed.timings) finalTimings = parsed.timings;
             const delta = parsed?.choices?.[0]?.delta;
             if (delta && delta.content) {
               choiceText += delta.content;
@@ -360,11 +365,24 @@ async function runTest(event) {
     const latency = Math.round(performance.now() - started);
     el("responseTime").textContent = `${latency} ms`;
 
-    // In streaming, llama.cpp returns usage in the last data chunk before DONE
-    const usage = lastData?.usage || {};
-    el("promptTokens").textContent = usage.prompt_tokens ?? "-";
-    el("outputTokens").textContent = usage.completion_tokens ?? "-";
-    el("tokRate").textContent = usage.completion_tokens && latency ? (usage.completion_tokens / (latency / 1000)).toFixed(2) : "-";
+    // Extract stats from usage or timings (llama.cpp specific)
+    const usage = finalUsage || lastData?.usage || {};
+    const timings = finalTimings || lastData?.timings || {};
+
+    const promptTokens = usage.prompt_tokens ?? timings.prompt_n ?? "-";
+    const completionTokens = usage.completion_tokens ?? timings.predicted_n ?? "-";
+    
+    // Prioritize backend timings for tok/s, fallback to client-calculated latency
+    let rate = "-";
+    if (timings.predicted_per_second) {
+      rate = timings.predicted_per_second.toFixed(2);
+    } else if (completionTokens !== "-" && completionTokens !== 0 && latency) {
+      rate = (completionTokens / (latency / 1000)).toFixed(2);
+    }
+
+    el("promptTokens").textContent = promptTokens;
+    el("outputTokens").textContent = completionTokens;
+    el("tokRate").textContent = rate;
 
     renderRaw(lastData || { ok: true });
     setHealth(true, "ok", latency);
