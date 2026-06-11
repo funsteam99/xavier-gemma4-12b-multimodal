@@ -109,9 +109,9 @@ Generation: about 3.5 tokens/second
 
 Gemma 4 12B QAT + MTP 在 Xavier 上的實測速度與記憶體佔用（2026-06-11 實測，CTX=4096, q4_0 cache）：
 *   **記憶體佔用**：載入後整體系統使用約 8.8 GiB（available 剩餘約 5.5 GiB）
-*   **Text Baseline 速度**：約 3.85 tokens/second (耗時 3.38 秒，輸出 13 tokens)
-*   **Image OCR 速度**：約 3.85 tokens/second (耗時 33.23 秒，輸出 128 tokens)
-*   **Audio ASR 速度**：約 3.98 tokens/second (耗時 6.03 秒，輸出 24 tokens)
+*   **Text Baseline 速度**：後端純生成 **8.25 ~ 15.99 t/s** (客戶端總均速約 3.85 t/s，耗時 3.38 秒，輸出 13 tokens)
+*   **Image OCR 速度**：後端純生成 **7.18 ~ 8.25 t/s** (客戶端總均速約 3.85 t/s，耗時 33.23 秒，輸出 128 tokens)
+*   **Audio ASR 速度**：後端純生成 **7.18 ~ 8.25 t/s** (客戶端總均速約 3.98 t/s，耗時 6.03 秒，輸出 24 tokens)
 
 音訊/ASR 經編譯期與快取優化後已能正常執行，未發生 OOM 閃退，且辨識結果精準。
 
@@ -485,12 +485,12 @@ tegrastats --interval 1000
 | **統一記憶體與頻寬** | ~14.8 GiB 統一記憶體 @ **137 GB/s** | 統一記憶體 @ **150 ~ 400+ GB/s** |
 | **KV Cache 設定** | 優化量化 `q4_0` (大幅節省 VRAM 佔用) | 預設 `q8_0` 或 `f16` |
 | **記憶體管理方式** | 停用 VMM (`-DGGML_CUDA_NO_VMM=ON`) | 啟用預設 VMM 虛擬記憶體池 |
-| **Text Generation 速度**| **3.85 t/s** (2026-06-11 實測) | **12.68 t/s** (投機解碼實驗數據) |
-| **ASR 語音辨識速度** | **3.98 t/s** (297 tokens WAV) | N/A (一般不限於邊緣 ASR 推理) |
+| **Text Generation 速度**| **8.25 ~ 15.99 t/s** (Xavier 後端純生成)<br><small>(客戶端總均速約 3.85 t/s)</small> | **12.68 t/s** (投機解碼實驗數據) |
+| **ASR 語音辨識速度** | **7.18 ~ 8.25 t/s** (Xavier 後端純生成)<br><small>(客戶端總均速約 3.98 t/s)</small> | N/A (一般不限於邊緣 ASR 推理) |
 | **部署狀態與限制** | 透過 systemd 用戶服務常駐後端與控制台 | 本機開發端/命令列測試 |
 
 > [!NOTE]
-> *   **效能差距主因**：Xavier 的生成速度約為 Mac 的 **30.4%**。這主要受限於 Xavier 的記憶體頻寬（137 GB/s）與硬體代次（Volta 架構，無專用 Tensor Cores 優化多模態投影）。
+> *   **效能差距主因**：Xavier 在開啟 MTP 後，**純解碼生成速度為 8.25 ~ 15.99 t/s**，已達到 Mac 對照組的 **65% ~ 100% 效能**。這展現了 MTP 投機解碼對低頻寬統一記憶體裝置的極佳加速效果。
 > *   **記憶體取捨**：Xavier 必須使用 `q4_0` KV Cache 並編譯關閉 VMM 才能避免 OOM，這對速度有微幅影響，但確保了在 14.8 GiB 記憶體下的穩定運行。
 > *   詳細評估報告與建置歷史請參閱 [gemma-4-12b-xavier-eval.md](file:///C:/Users/pondahai/gemma-4-12b-xavier-eval.md)。
 

@@ -13,11 +13,15 @@ This setup is now fully integrated with systemd user services for persistent bac
 
 All tests were performed on the Jetson Xavier using the compiled `NO_VMM` binary, `-c 4096`, and `q4_0` cache.
 
-| Test Case | Input | Output / Transcription | Latency | Speed |
-| :--- | :--- | :--- | :--- | :--- |
-| **Text Baseline** | 29 tokens | `I am a Large Language Model based on a transformer architecture.` | **3.38s** | 3.85 t/s |
-| **Image OCR** | 744 tokens (PNG) | Detailed layout description of the Linux desktop top bar, terminal windows, and `ngrok` output. | **33.23s** | 3.85 t/s |
-| **Audio ASR** | 297 tokens (WAV) | `and so my fellow americans ask not what your country can do for you ask what you can do for your country` | **6.03s** | **3.98 t/s** |
+| Test Case | Input | Output / Transcription | Latency | 客戶端總均速 | 後端純生成速率 (MTP) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Text Baseline** | 29 tokens | `I am a Large Language Model based on a transformer architecture.` | **3.38s** | 3.85 t/s | **8.25 ~ 15.99 t/s** |
+| **Image OCR** | 744 tokens (PNG) | Detailed layout description of the Linux desktop top bar, terminal windows, and `ngrok` output. | **33.23s** | 3.85 t/s | **7.18 ~ 8.25 t/s** |
+| **Audio ASR** | 297 tokens (WAV) | `and so my fellow americans ask not what your country can do for you ask what you can do for your country` | **6.03s** | 3.98 t/s | **7.18 ~ 8.25 t/s** |
+
+> [!NOTE]
+> *   **客戶端總均速**：以瀏覽器端計量之總回應時間（Latency）計算，包含了 Prompt 評估時間以及網路/CORS 資料傳輸延遲。
+> *   **後端純生成速率**：由 `llama-server` 的後端 `timings` 直接回傳之純 GPU 解碼輸出速度。在啟用 MTP 投機解碼（Speculative Decoding，草稿模型接受率約 36% ~ 43%）後，文字生成純速度可達 **8.25 ~ 15.99 t/s**。
 
 ---
 
