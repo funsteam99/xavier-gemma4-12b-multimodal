@@ -136,20 +136,60 @@ function clearAudio() {
   el("audioTitle").textContent = "選擇音訊";
 }
 
+function convertWebpToPng(file, callback) {
+  const img = new Image();
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      const pngDataUrl = canvas.toDataURL("image/png");
+      callback(pngDataUrl);
+    };
+    img.onerror = () => {
+      callback(null);
+    };
+    img.src = String(e.target.result);
+  };
+  reader.readAsDataURL(file);
+}
+
 function loadImage(file) {
   if (!file) return;
   if (!imageOk(file)) {
     showMessage(`不支援的圖片格式：${file.name}。請使用 PNG / JPG / WebP。`);
     return;
   }
-  readDataUrl(file, (dataUrl) => {
-    state.imageData = dataUrl;
-    state.imageName = file.name;
-    el("preview").src = dataUrl;
-    el("preview").hidden = false;
-    el("imageTitle").textContent = file.name;
-    showMessage(`圖片已載入：${file.name}`, "ok");
-  });
+
+  const isWebp = file.type === "image/webp" || file.name.toLowerCase().endsWith(".webp");
+
+  if (isWebp) {
+    showMessage("偵測到 WebP 格式，正在瀏覽器端自動轉換為 PNG...", "warn");
+    convertWebpToPng(file, (pngDataUrl) => {
+      if (!pngDataUrl) {
+        showMessage(`WebP 轉換失敗：${file.name}，請改用 PNG 或 JPG。`, "bad");
+        return;
+      }
+      state.imageData = pngDataUrl;
+      state.imageName = file.name.replace(/\.webp$/i, ".png");
+      el("preview").src = pngDataUrl;
+      el("preview").hidden = false;
+      el("imageTitle").textContent = file.name + " (已自動轉 PNG)";
+      showMessage(`WebP 圖片已成功轉碼為 PNG：${file.name}`, "ok");
+    });
+  } else {
+    readDataUrl(file, (dataUrl) => {
+      state.imageData = dataUrl;
+      state.imageName = file.name;
+      el("preview").src = dataUrl;
+      el("preview").hidden = false;
+      el("imageTitle").textContent = file.name;
+      showMessage(`圖片已載入：${file.name}`, "ok");
+    });
+  }
 }
 
 async function preprocessAudio(file) {
