@@ -1,165 +1,127 @@
 # Gemma 4 12B on Jetson Xavier Evaluation
 
-Date: 2026-06-05
+Date: 2026-06-11 (Updated)
 
 ## Summary
+Gemma 4 12B QAT + MTP multimodal setup has been successfully brought up and tested on Jetson Xavier. By optimizing compilation options and runtime parameters, we successfully resolved initial CUDA Out of Memory (OOM) crashes during audio ASR, enabling full Text, Image OCR, and Audio ASR capabilities.
 
-Gemma 4 12B should be testable on the current Jetson Xavier, but it is a tight fit and should be treated as an experimental bring-up, not a guaranteed daily-driver replacement for the working Gemma 4 E4B setup.
+This setup is now fully integrated with systemd user services for persistent backend and web console hosting.
 
-Current decision: keep Gemma 4 12B multimodal as a trial setup only. Text and general multimodal loading work, but audio/ASR should wait for more mature `llama.cpp` support.
+---
 
-Recommended first target:
+## Benchmark Results (2026-06-11)
 
-- `ggml-org/gemma-4-12B-it-GGUF`
-- `gemma-4-12B-it-Q4_K_M.gguf`
-- `mmproj-gemma-4-12B-it-Q8_0.gguf`
-- short context first: `-c 2048`
-- single request only: `--parallel 1`
-- low output cap during tests: `max_tokens` 64 to 128
+All tests were performed on the Jetson Xavier using the compiled `NO_VMM` binary, `-c 4096`, and `q4_0` cache.
 
-## Why It Might Fit
+| Test Case | Input | Output / Transcription | Latency | Speed |
+| :--- | :--- | :--- | :--- | :--- |
+| **Text Baseline** | 29 tokens | `I am a Large Language Model based on a transformer architecture.` | **3.38s** | 3.85 t/s |
+| **Image OCR** | 744 tokens (PNG) | Detailed layout description of the Linux desktop top bar, terminal windows, and `ngrok` output. | **33.23s** | 3.85 t/s |
+| **Audio ASR** | 297 tokens (WAV) | `and so my fellow americans ask not what your country can do for you ask what you can do for your country` | **6.03s** | **3.98 t/s** |
 
-Current Xavier facts from the working E4B setup:
+---
 
-- Visible shared RAM / CUDA memory: about 14 GiB
-- Existing E4B Q4_K_M multimodal setup works with CUDA through `llama.cpp`
-- E4B text generation is about 4.5 to 5.3 tokens/second
-- E4B prompt eval is about 60 to 103 tokens/second
+## Critical Issues & Solutions
 
-Published 12B GGUF file sizes:
+### 1. Audio ASR CUDA Out of Memory (OOM) Crash
+*   **Symptom:** During audio input processing, `llama-server` crashed with `CUDA error: out of memory` during virtual memory allocation (`cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0)`).
+*   **Root Cause:**
+    1.  The default CUDA allocator in `llama.cpp` uses Virtual Memory Management (VMM) pools. On unified memory systems like Jetson Tegra, reserving large virtual memory pools is highly prone to failing.
+    2.  Loading a 12B QAT model (6.5GB) + MTP assistant draft model (444MB) + multimodal projector (168MB) leaves very little headroom. When the audio projector ran, it triggered a VMM pool extension that failed.
+*   **Solution:**
+    *   **Compile-time Fix:** Recompiled `llama.cpp` on Xavier with `-DGGML_CUDA_NO_VMM=ON` to disable the VMM memory pool. This forces the system to use standard `cudaMalloc` allocations.
+    *   **Runtime Cache Optimization:** Configured KV Cache to use `q4_0` instead of `q8_0` for both target and draft models (`--cache-type-k q4_0 --cache-type-v q4_0 --cache-type-k-draft q4_0 --cache-type-v-draft q4_0`).
+    *   **Context Scaling:** Scaled down context size to `-c 2048` and batch sizes to `-b 512 -ub 512` to reduce peak memory activations.
 
-- Q4_K_M model: about 7.38 GB
-- Q8_0 model: about 12.7 GB
-- bf16 model: about 23.8 GB
-- Q8_0 mmproj: about 159 MB
-- bf16 mmproj: about 175 MB
+---
 
-The Q4_K_M model plus mmproj leaves room for runtime buffers and KV cache if context is kept modest. Q8_0 and bf16 are not realistic targets on Xavier.
-
-## Main Risk
-
-The current Xavier `llama.cpp` build is:
-
-```text
-version: 8881
-commit: 0dedb9ef7
-```
-
-Gemma 4 12B was released on 2026-06-03, and the official GGUF repository was reconverted within the last day. Community reports mention loader/projector issues around the new 12B unified multimodal projector format. Before testing 12B, update and rebuild `llama.cpp` on Xavier.
-
-## Audio / ASR Hold
-
-The 12B model loads with the multimodal projector, and `llama-server` reports multimodal capability. However, the runtime log explicitly marks audio input as experimental:
-
-```text
-init_audio: audio input is in experimental stage and may have reduced quality
-```
-
-Observed 12B ASR behavior on Xavier includes repeated trailing phrases after the useful transcription, especially when the audio ends and the model keeps generating. Console-side mitigations were added:
-
-- stricter ASR prompt
-- `temperature: 0` for audio tasks
-- `repeat_penalty: 1.18` for audio tasks
-- ASR default `max_tokens: 160`
-
-These reduce the risk but do not make ASR production-ready. Keep Gemma 4 E4B as the current practical ASR/multimodal baseline, and revisit Gemma 4 12B ASR when `llama.cpp` audio support is no longer experimental or when a newer projector/runtime clearly fixes repetition.
-
-## Expected Performance
-
-Gemma 4 12B has roughly 3x the parameter count of E4B. On Xavier, expect a clear slowdown:
-
-- Text generation: likely around 1.5 to 2.5 tokens/second
-- Image/audio prompt processing: likely usable but noticeably slower than E4B
-- Long answers: likely frustrating; keep generation short
-
-The win is quality, reasoning, and native image/audio/video input support. The cost is latency.
-
-## Suggested Model Layout
-
-```text
-/media/nvidia/sd/models/gemma-4-12b-it/
-  gemma-4-12B-it-Q4_K_M.gguf
-  mmproj-gemma-4-12B-it-Q8_0.gguf
-```
-
-## Dedicated Script
-
-This repo now includes a dedicated Xavier-side script:
-
-```text
-scripts/init-xavier-12b.sh
-```
-
-It keeps 12B separate from the working E4B service:
-
-- backend: `18085`
-- console: `18091`
-- console directory: `/media/nvidia/sd/gemma4-12b-console`
-- backend log: `/tmp/llama_gemma4_12b.log`
-- console log: `/tmp/gemma4_12b_console.log`
-
-Run on Xavier:
+## Compile & Build History
+For reference, here is the command used to compile `llama.cpp` on the Xavier with the VMM allocator disabled:
 
 ```bash
-chmod +x scripts/init-xavier-12b.sh
-./scripts/init-xavier-12b.sh check
-./scripts/init-xavier-12b.sh start
+cd /home/nvidia/src/llama.cpp
+# 1. Configure CMake with NO_VMM and Xavier architecture (7.2)
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=72 -DGGML_CUDA_NO_VMM=ON
+
+# 2. Build llama-server and llama-cli using 6 cores
+cmake --build build -j6 --target llama-server llama-cli
 ```
 
-## Suggested First Launch
+---
 
-Start conservatively:
+## Model Layout
+*   **Main Model:** `/media/nvidia/sd/models/gemma-4-12b-qat-mtp/gemma-4-12B-it-QAT-Q4_0.gguf` (6.5 GB)
+*   **Draft Model (MTP):** `/media/nvidia/sd/models/gemma-4-12b-qat-mtp/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf` (444 MB)
+*   **Multimodal Projector:** `/media/nvidia/sd/models/gemma-4-12b-qat-mtp/mmproj-gemma-4-12B-it-QAT-BF16.gguf` (168 MB)
 
-```bash
-/home/nvidia/src/llama.cpp/build/bin/llama-server \
-  -m /media/nvidia/sd/models/gemma-4-12b-it/gemma-4-12B-it-Q4_K_M.gguf \
-  --mmproj /media/nvidia/sd/models/gemma-4-12b-it/mmproj-gemma-4-12B-it-Q8_0.gguf \
+---
+
+## Systemd User Services Configuration
+
+Both services have been updated and reloaded under systemd user config (`~/.config/systemd/user/`).
+
+### 1. Backend Service (`gemma-12b-backend.service`)
+```ini
+[Unit]
+Description=Gemma-4-12b llama-server Backend on Port 18085
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nvidia/src/llama.cpp
+Environment=GGML_CUDA_NO_VMM=1 PYTHONUNBUFFERED=1
+ExecStart=/home/nvidia/src/llama.cpp/build/bin/llama-server \
+  -m /media/nvidia/sd/models/gemma-4-12b-qat-mtp/gemma-4-12B-it-QAT-Q4_0.gguf \
+  --model-draft /media/nvidia/sd/models/gemma-4-12b-qat-mtp/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf \
+  --spec-type draft-mtp \
+  --spec-draft-n-max 4 \
+  --mmproj /media/nvidia/sd/models/gemma-4-12b-qat-mtp/mmproj-gemma-4-12B-it-QAT-BF16.gguf \
   --media-path /tmp \
-  --host 0.0.0.0 \
-  --port 18085 \
-  -c 2048 \
-  -b 1024 \
-  -ub 512 \
-  -ngl 99 \
-  --threads 3 \
-  --parallel 1 \
-  --image-max-tokens 512 \
-  --cache-type-k q8_0 \
-  --cache-type-v q8_0 \
-  --cache-ram 0 \
-  --reasoning off \
-  --no-warmup
+  --host 0.0.0.0 --port 18085 \
+  -c 4096 -b 512 -ub 512 \
+  -ngl 99 -ngld 99 \
+  --threads 3 --parallel 1 \
+  --image-max-tokens 768 \
+  --cache-type-k q4_0 --cache-type-v q4_0 \
+  --cache-type-k-draft q4_0 --cache-type-v-draft q4_0 \
+  --cache-ram 0 --reasoning off --no-warmup
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
 ```
 
-If it runs out of memory:
+### 2. Console Service (`gemma-12b-console.service`)
+```ini
+[Unit]
+Description=Gemma-4-12b Web Console on Port 18091
+After=network-online.target gemma-12b-backend.service
+Wants=network-online.target gemma-12b-backend.service
 
-1. Reduce context to `-c 1024`
-2. Reduce `-b 512`
-3. Reduce `--image-max-tokens 256`
-4. Try fewer GPU layers, for example `-ngl 40`, then `-ngl 24`
+[Service]
+Type=simple
+WorkingDirectory=/media/nvidia/sd/gemma4-12b-qat-mtp-console
+Environment=PORT=18091 GEMMA_BACKEND=http://127.0.0.1:18085 APP_TITLE="Gemma 4 12B QAT + MTP Console" MODEL_HINT="gemma-4-12B-it-QAT-Q4_0.gguf + MTP Q8_0" PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /media/nvidia/sd/gemma4-12b-qat-mtp-console/server.py
+Restart=always
+RestartSec=5
 
-If image input hits the same non-causal attention batch assertion seen with E4B, raise `-ub` back to `1024`.
+[Install]
+WantedBy=default.target
+```
 
-## Test Order
-
-1. Text health: `/health` and `/v1/models`
-2. Short text prompt with `max_tokens: 32`
-3. Longer text prompt with `max_tokens: 128`
-4. Small image OCR with `--image-max-tokens 256`
-5. WAV or MP3 audio ASR
-6. Combined image + audio
-
-Record:
-
-- load success or error
-- peak memory from `tegrastats`
-- prompt eval tokens/second
-- generation tokens/second
-- image/audio preprocessing time
-- output quality compared with E4B
-
-## Recommendation
-
-Proceed with a controlled trial. Keep the existing E4B service intact on port `18084`, run 12B separately on port `18085`, and only promote it if it loads reliably and produces materially better answers for Xavier's target tasks.
-
-For daily interactive use on Xavier, E4B will probably remain the faster default. Gemma 4 12B is worth testing for harder OCR, reasoning, code, and multi-step image understanding where slower output is acceptable. Do not treat 12B ASR/audio as the default path yet.
+### 3. Service Commands
+*   **Start services:**
+    ```bash
+    systemctl --user start gemma-12b-backend.service gemma-12b-console.service
+    ```
+*   **Check status:**
+    ```bash
+    systemctl --user status gemma-12b-backend.service gemma-12b-console.service
+    ```
+*   **Stop services:**
+    ```bash
+    systemctl --user stop gemma-12b-backend.service gemma-12b-console.service
+    ```

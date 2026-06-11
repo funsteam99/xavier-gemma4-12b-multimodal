@@ -6,10 +6,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/nvidia/src/llama.cpp
-ExecStart=/home/nvidia/src/llama.cpp/build/bin/llama-server -m /media/nvidia/sd/models/gemma-4-12b-it/gemma-4-12B-it-Q4_K_M.gguf --mmproj /media/nvidia/sd/models/gemma-4-12b-it/mmproj-gemma-4-12B-it-Q8_0.gguf --media-path /tmp --host 0.0.0.0 --port 18085 -c 4096 -b 1024 -ub 1024 -ngl 99 --threads 3 --parallel 1 --image-max-tokens 768 --cache-type-k q8_0 --cache-type-v q8_0 --cache-ram 0 --reasoning off --no-warmup
+Environment=GGML_CUDA_NO_VMM=1 PYTHONUNBUFFERED=1
+ExecStart=/home/nvidia/src/llama.cpp/build/bin/llama-server -m /media/nvidia/sd/models/gemma-4-12b-qat-mtp/gemma-4-12B-it-QAT-Q4_0.gguf --model-draft /media/nvidia/sd/models/gemma-4-12b-qat-mtp/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf --spec-type draft-mtp --spec-draft-n-max 4 --mmproj /media/nvidia/sd/models/gemma-4-12b-qat-mtp/mmproj-gemma-4-12B-it-QAT-BF16.gguf --media-path /tmp --host 0.0.0.0 --port 18085 -c 4096 -b 512 -ub 512 -ngl 99 -ngld 99 --threads 3 --parallel 1 --image-max-tokens 768 --cache-type-k q4_0 --cache-type-v q4_0 --cache-type-k-draft q4_0 --cache-type-v-draft q4_0 --cache-ram 0 --reasoning off --no-warmup
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target

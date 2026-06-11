@@ -1,6 +1,6 @@
-# Gemma 4 12B Multimodal Trial on Jetson Xavier
+# Gemma 4 12B QAT + MTP Multimodal Trial on Jetson Xavier
 
-本專案記錄在 NVIDIA Jetson Xavier 上使用 `llama.cpp` 執行 **Gemma 4 12B 多模態模型** 的實測狀態、安裝流程、前端測試工具與待解問題。
+本專案記錄在 NVIDIA Jetson Xavier 上使用 `llama.cpp` 執行 **Gemma 4 12B QAT + MTP 多模態模型** 的實測狀態、安裝流程、前端測試工具與待解問題。
 
 這個 repo 建議對應 GitHub：
 
@@ -16,7 +16,7 @@ https://github.com/funsteam99/xavier-gemma4-e4b-multimodal.git
 
 目前定位：
 
-- **Gemma 4 12B**：本 repo 主角，已成功載入並可測文字/多模態，但 audio/ASR 仍視為實驗性，不作正式採用。
+- **Gemma 4 12B QAT + MTP**：本 repo 主線。已完成 `llama.cpp` CUDA build（特別在編譯期停用 VMM 以防多模態音訊/影像推導發生 OOM 崩潰），且已完成首輪效能驗證與 systemd 自動化服務部署。
 - **Gemma 4 E4B**：只作 baseline 參照；正式 E4B 紀錄請看 `xavier-gemma4-e4b-multimodal`。
 
 ## Hardware
@@ -48,51 +48,51 @@ CUDA memory reported by llama.cpp: 14886 MiB
 /home/nvidia/XAVIER
 ```
 
-> [!IMPORTANT]
-> **⚠️ 關於前端控制台 (Console) 的開發與部署目錄說明：**
-> * **開發與 Git 版控目錄**：`/home/nvidia/XAVIER/console`
->   * 這是您實際修改網頁代碼（`server.py`、`index.html` 等）與進行 Git/GitHub 版本控制的地方。
-> * **實際運行部署目錄**：`/media/nvidia/sd/gemma4-12b-console`
->   * 這是 Systemd 服務或啟動腳本實際執行運作的地方（位於 SD 卡上）。
-> * **同步機制**：每次啟動/重啟服務時，腳本會**自動將開發目錄下的最新代碼複製並覆蓋到 SD 卡上的運行目錄**。
-> * **注意事項**：請**不要**直接去修改 SD 卡路徑下的程式碼，否則修改會被自動覆蓋且不會被 Git 追蹤。請一律在 `/home/nvidia/XAVIER/console` 進行修改。
-
 ## Model Focus
 
 ### Gemma 4 12B
 
-12B 是本 repo 的主要測試目標。它已在 Xavier 上成功載入，使用新版 `llama.cpp`：
+12B QAT + MTP 是本 repo 的主要測試目標。模型使用 QAT Q4_0 主模型、Q8_0 MTP drafter 與 BF16 多模態 projector。
 
 ```text
-llama.cpp version: 9522 (3ecfb150a)
+llama.cpp source: official master
+verified source commit: ac4cddeb0 (2026-06-10)
+CUDA architecture: 72
 ```
 
-模型檔：
+模型集中在獨立目錄：
 
 ```text
-/media/nvidia/sd/models/gemma-4-12b-it/
-  gemma-4-12B-it-Q4_K_M.gguf
-  mmproj-gemma-4-12B-it-Q8_0.gguf
+/media/nvidia/sd/models/gemma-4-12b-qat-mtp/
+  gemma-4-12B-it-QAT-Q4_0.gguf
+  gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf
+  mmproj-gemma-4-12B-it-QAT-BF16.gguf
 ```
 
-服務：
+Runtime 目錄與服務：
 
 ```text
+Repo:    /home/nvidia/XAVIER
+Console: /media/nvidia/sd/gemma4-12b-qat-mtp-console
 Backend: http://ubuntu.local:18085
 Console: http://ubuntu.local:18091
 ```
 
-目前 12B 啟動設定：
+預設啟動設定：
 
 ```text
 n_ctx: 4096
-batch: 1024
-ubatch: 1024
+batch: 512
+ubatch: 512
 parallel: 1
+spec_type: draft-mtp
+spec_draft_n_max: 4
+main GPU layers: 99
+draft GPU layers: 99
 image_max_tokens: 768
 ```
 
-載入後記憶體大約：
+舊 Q4_K_M baseline 曾測得：
 
 ```text
 RAM used: about 9 GiB
@@ -100,20 +100,20 @@ RAM available: about 4 to 5 GiB
 Swap used: small, about 80 to 100 MiB
 ```
 
-12B 文字 smoke test 成功，但速度較慢：
+舊 Q4_K_M baseline 速度：
 
 ```text
 Prompt eval: about 5.3 tokens/second
 Generation: about 3.5 tokens/second
 ```
 
-重要限制：12B 的 audio/ASR 暫不作正式採用。`llama.cpp` runtime log 明確顯示：
+Gemma 4 12B QAT + MTP 在 Xavier 上的實測速度與記憶體佔用（2026-06-11 實測，CTX=4096, q4_0 cache）：
+*   **記憶體佔用**：載入後整體系統使用約 8.8 GiB（available 剩餘約 5.5 GiB）
+*   **Text Baseline 速度**：約 3.85 tokens/second (耗時 3.38 秒，輸出 13 tokens)
+*   **Image OCR 速度**：約 3.85 tokens/second (耗時 33.23 秒，輸出 128 tokens)
+*   **Audio ASR 速度**：約 3.98 tokens/second (耗時 6.03 秒，輸出 24 tokens)
 
-```text
-init_audio: audio input is in experimental stage and may have reduced quality
-```
-
-實測 ASR 會出現尾端重複片段。前端已加入保守 ASR prompt、`temperature: 0`、`repeat_penalty: 1.18`、ASR 預設 `max_tokens: 160`，但這只是緩解，不代表穩定。
+音訊/ASR 經編譯期與快取優化後已能正常執行，未發生 OOM 閃退，且辨識結果精準。
 
 ### E4B Baseline
 
@@ -159,22 +159,22 @@ cd /home/nvidia/src/llama.cpp
 git pull --ff-only
 ```
 
-設定 CUDA build：
+設定 CUDA build（特別加入 `-DGGML_CUDA_NO_VMM=ON` 以免多模態語音/影像編碼造成 VMM 崩潰）：
 
 ```bash
-cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=72
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=72 -DGGML_CUDA_NO_VMM=ON
 ```
 
-Xavier 記憶體有限，編譯不要用無限制 `-j`。建議：
+Xavier 記憶體有限，編譯不要用無限制 `-j`。未啟動服務時，空閒記憶體有 11GiB 左右，建議使用 `-j6` 快速編譯：
 
 ```bash
-cmake --build build -j2 --target llama-server llama-cli
+cmake --build build -j6 --target llama-server llama-cli
 ```
 
 如果記憶體吃緊，改用：
 
 ```bash
-cmake --build build -j1 --target llama-server llama-cli
+cmake --build build -j2 --target llama-server llama-cli
 ```
 
 確認版本：
@@ -191,17 +191,20 @@ E4B：
 mkdir -p /media/nvidia/sd/models/gemma-4-e4b-it
 ```
 
-12B：
+12B QAT + MTP：
 
 ```bash
-mkdir -p /media/nvidia/sd/models/gemma-4-12b-it
-cd /media/nvidia/sd/models/gemma-4-12b-it
+mkdir -p /media/nvidia/sd/models/gemma-4-12b-qat-mtp
+cd /media/nvidia/sd/models/gemma-4-12b-qat-mtp
 
-wget -c -O gemma-4-12B-it-Q4_K_M.gguf \
-  https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12B-it-Q4_K_M.gguf
+curl -fL -C - -o gemma-4-12B-it-QAT-Q4_0.gguf \
+  https://huggingface.co/lmstudio-community/gemma-4-12B-it-QAT-GGUF/resolve/main/gemma-4-12B-it-QAT-Q4_0.gguf
 
-wget -c -O mmproj-gemma-4-12B-it-Q8_0.gguf \
-  https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF/resolve/main/mmproj-gemma-4-12B-it-Q8_0.gguf
+curl -fL -C - -o mmproj-gemma-4-12B-it-QAT-BF16.gguf \
+  https://huggingface.co/lmstudio-community/gemma-4-12B-it-QAT-GGUF/resolve/main/mmproj-gemma-4-12B-it-QAT-BF16.gguf
+
+curl -fL -C - -o gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf \
+  https://huggingface.co/Janvitos/gemma-4-12B-it-qat-assistant-MTP-Q8_0-GGUF/resolve/main/gemma-4-12B-it-qat-assistant-MTP-Q8_0.gguf
 ```
 
 下載前後建議檢查：
@@ -246,7 +249,7 @@ cd /home/nvidia/XAVIER
 ./scripts/init-xavier.sh start-console
 ```
 
-### 12B
+### 12B QAT + MTP
 
 ```bash
 cd /home/nvidia/XAVIER
@@ -263,15 +266,29 @@ cd /home/nvidia/XAVIER
 ./scripts/init-xavier-12b.sh start-console
 ```
 
-12B 可用環境變數調整：
+QAT/MTP 可用環境變數調整：
 
 ```bash
 CTX_SIZE=4096 \
-BATCH_SIZE=1024 \
-UBATCH_SIZE=1024 \
+BATCH_SIZE=512 \
+UBATCH_SIZE=512 \
+SPEC_DRAFT_N_MAX=4 \
 IMAGE_MAX_TOKENS=768 \
 ./scripts/init-xavier-12b.sh start
 ```
+
+腳本會在啟動前執行 `free -h` 與 `tegrastats`，預設要求至少 `10240 MiB` 的 `MemAvailable`。不要同時啟動 E4B、舊 12B 或其他大型推理模型。
+
+等 systemd unit 更新為 QAT/MTP 後，正式服務操作為：
+
+```bash
+systemctl --user start gemma-12b-backend.service
+systemctl --user start gemma-12b-console.service
+systemctl --user status gemma-12b-backend.service
+systemctl --user status gemma-12b-console.service
+```
+
+在 unit 更新完成前，以 repo 腳本為準，不要啟動仍指向舊 Q4_K_M 路徑的 unit。
 
 如果遇到 context 不足：
 
@@ -426,19 +443,13 @@ CTX_SIZE=4096
 
 ## Pending Issues
 
-### 1. 12B ASR/audio 等待正式支援
+### 1. 12B ASR/audio 已成功測試並解決 VMM 崩潰
 
-目前 `llama.cpp` audio input 仍標示 experimental。12B ASR 會出現尾端重複片段，因此 12B audio/ASR 只保留為測試功能。
-
-目前決策：
-
-- E4B 繼續作為可用 baseline
-- 12B 可測文字、圖片理解、OCR、較難推理
-- 12B ASR/audio 等待 `llama.cpp` 後續正式支援或更穩定 runtime
+透過編譯期停用虛擬記憶體管理選項（-DGGML_CUDA_NO_VMM=ON），且搭配優化快取參數（q4_0 KV cache），ASR 語音辨識已可正常運作，不再發生 OOM 崩潰。不過 `llama.cpp` 音訊輸入仍有實驗性性質，後續可持續追蹤 ASR 尾端重複片段的優化。
 
 ### 2. 12B 記憶體餘裕有限
 
-12B Q4_K_M 載入後約使用 9 GiB RAM，Xavier 剩約 4 到 5 GiB 可用。啟動前、長任務前、調高 context 前都要先查：
+舊 12B Q4_K_M 載入後約使用 9 GiB RAM。QAT + MTP 會另外載入 drafter，實際餘裕必須重新測量。啟動前、長任務前、調高 context 前都要先查：
 
 ```bash
 free -h
@@ -464,9 +475,19 @@ tegrastats --interval 1000
 - 測試紀錄匯出
 - 針對 E4B / 12B 的比較頁
 
+### 5. QAT + MTP Xavier 評估
+
+Mac 上的 QAT Q4_0 + MTP speculative decoding 實驗回報約 12.68 tok/s，已整理成 Xavier 移植評估：
+
+```text
+docs/mac-qat-mtp-reference.md
+```
+
+三個模型已下載至獨立目錄。Xavier 尚未完成首次 QAT/MTP benchmark；後續測試必須在每個步驟前後檢查 RAM、swap 與 `tegrastats`。
+
 ## Current Recommendation
 
-本 repo 的主線是 `Gemma 4 12B` 在 Xavier 上的可行性與多模態 trial。
+本 repo 的主線是 `Gemma 4 12B QAT + MTP` 在 Xavier 上的可行性與多模態 trial。
 
 日常互動與 ASR 目前仍先用 E4B baseline。
 

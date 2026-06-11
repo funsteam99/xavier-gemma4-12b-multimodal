@@ -152,24 +152,124 @@ function loadImage(file) {
   });
 }
 
-function loadAudio(file) {
-  if (!file) return;
-  const format = audioFormatFor(file);
-  if (!format) {
-    showMessage(`不支援的音訊格式：${file.name}。llama.cpp input_audio 目前請使用 WAV 或 MP3。`);
-    return;
+async function preprocessAudio(file) {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) {
+    throw new Error("Web Audio API is not supported in this browser");
   }
-  readDataUrl(file, (dataUrl) => {
-    state.audioData = dataUrl.split(",", 2)[1] || "";
-    state.audioName = file.name;
-    state.audioFormat = format;
-    if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-    state.audioUrl = URL.createObjectURL(file);
-    el("audioPreview").src = state.audioUrl;
-    el("audioPreview").hidden = false;
-    el("audioTitle").textContent = file.name;
-    showMessage(`音訊已載入：${file.name}`, "ok");
-  });
+  const audioCtx = new AudioContext();
+  const arrayBuffer = await file.arrayBuffer();
+  
+  // Decode the file regardless of original format
+  const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  
+  // Resample to 16000 Hz, Mono
+  const targetSampleRate = 16000;
+  const offlineCtx = new OfflineAudioContext(1, Math.round(audioBuffer.duration * targetSampleRate), targetSampleRate);
+  
+  const source = offlineCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(offlineCtx.destination);
+  source.start();
+  
+  const resampledBuffer = await offlineCtx.startRendering();
+  const pcmData = resampledBuffer.getChannelData(0);
+  
+  // Peak Normalization (scale to -1dB peak / ~0.89 amplitude)
+  let maxVal = 0;
+  for (let i = 0; i < pcmData.length; i++) {
+    const val = Math.abs(pcmData[i]);
+    if (val > maxVal) maxVal = val;
+  }
+  if (maxVal > 0) {
+    const scale = 0.89 / maxVal;
+    for (let i = 0; i < pcmData.length; i++) {
+      pcmData[i] *= scale;
+    }
+  }
+  
+  // Encode Float32 PCM to 16-bit PCM WAV Blob
+  return encodeWav(pcmData, targetSampleRate);
+}
+
+function encodeWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  
+  const writeString = (view, offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+  
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // Byte rate
+  view.setUint16(32, 2, true); // Block align
+  view.setUint16(34, 16, true); // 16-bit
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  
+  return new Blob([view], { type: 'audio/wav' });
+}
+
+async function loadAudio(file) {
+  if (!file) return;
+  
+  showMessage(`正在預處理音訊（解碼、重採樣至 16kHz 單聲道、音量標準化）：${file.name}...`, "warn");
+  
+  try {
+    const wavBlob = await preprocessAudio(file);
+    
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      state.audioData = dataUrl.split(",", 2)[1] || "";
+      state.audioName = file.name + " (resampled)";
+      state.audioFormat = "wav"; // Resampled output is always wav
+      
+      if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+      state.audioUrl = URL.createObjectURL(wavBlob);
+      el("audioPreview").src = state.audioUrl;
+      el("audioPreview").hidden = false;
+      el("audioTitle").textContent = file.name + " (16kHz Mono WAV)";
+      showMessage(`音訊預處理完成並已載入：${file.name}`, "ok");
+    };
+    reader.readAsDataURL(wavBlob);
+  } catch (err) {
+    console.error(err);
+    showMessage(`音訊解碼/預處理失敗 (${err.message})，改用直接載入模式...`, "warn");
+    
+    // Fallback to direct load
+    const format = audioFormatFor(file);
+    if (!format) {
+      showMessage(`不支援的音訊格式：${file.name}。llama.cpp input_audio 目前請使用 WAV 或 MP3。`);
+      return;
+    }
+    readDataUrl(file, (dataUrl) => {
+      state.audioData = dataUrl.split(",", 2)[1] || "";
+      state.audioName = file.name;
+      state.audioFormat = format;
+      if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+      state.audioUrl = URL.createObjectURL(file);
+      el("audioPreview").src = state.audioUrl;
+      el("audioPreview").hidden = false;
+      el("audioTitle").textContent = file.name;
+      showMessage(`音訊已直接載入（未預處理）：${file.name}`, "ok");
+    });
+  }
 }
 
 function buildPayload() {

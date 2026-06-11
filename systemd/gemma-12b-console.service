@@ -5,12 +5,11 @@ Wants=network-online.target gemma-12b-backend.service
 
 [Service]
 Type=simple
-WorkingDirectory=/media/nvidia/sd/gemma4-12b-console
-Environment=PORT=18091 GEMMA_BACKEND=http://127.0.0.1:18085 APP_TITLE="Gemma 4 12B Test Console" MODEL_HINT=gemma-4-12B-it-Q4_K_M.gguf
-ExecStart=/usr/bin/python3 /media/nvidia/sd/gemma4-12b-console/server.py
+WorkingDirectory=/media/nvidia/sd/gemma4-12b-qat-mtp-console
+Environment=PORT=18091 GEMMA_BACKEND=http://127.0.0.1:18085 APP_TITLE="Gemma 4 12B QAT + MTP Console" MODEL_HINT="gemma-4-12B-it-QAT-Q4_0.gguf + MTP Q8_0" PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /media/nvidia/sd/gemma4-12b-qat-mtp-console/server.py
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target
