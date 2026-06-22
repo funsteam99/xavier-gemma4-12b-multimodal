@@ -107,6 +107,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/api/health":
                 code, payload = self._backend("GET", "/health", timeout=10)
+                # Fetch slots to get n_ctx
+                s_code, s_payload = self._backend("GET", "/slots", timeout=10)
+                if s_code == 200 and isinstance(s_payload, dict) and "data" in s_payload:
+                    payload["slots"] = s_payload["data"]
                 self._json(code, payload)
             elif self.path == "/api/config":
                 self._json(200, {"ok": True, "app_title": APP_TITLE, "model_hint": MODEL_HINT})

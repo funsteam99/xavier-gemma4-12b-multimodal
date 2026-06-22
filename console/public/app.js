@@ -25,11 +25,192 @@ const state = {
   audioName: null,
   audioFormat: null,
   audioUrl: null,
-  modelId: "gemma-4-E4B-it-Q4_K_M.gguf",
+  modelId: "gemma-4-12B-it-QAT-Q4_0.gguf",
+  contextLimit: 4096,
 };
 
 const imageTypes = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 
+// Navigation Tabs Setup
+function initTabs() {
+  const tabs = [
+    { btn: el("btnConsole"), pane: el("tabConsole") },
+    { btn: el("btnComparison"), pane: el("tabComparison") },
+    { btn: el("btnLogs"), pane: el("tabLogs") }
+  ];
+
+  tabs.forEach(tab => {
+    tab.btn.addEventListener("click", () => {
+      tabs.forEach(t => {
+        t.btn.classList.remove("active");
+        t.pane.classList.remove("active");
+      });
+      tab.btn.classList.add("active");
+      tab.pane.classList.add("active");
+    });
+  });
+}
+
+// Token Estimation
+function estimateTokens(text) {
+  if (!text) return 0;
+  // Estimate Chinese characters (1 token each)
+  const chineseChars = text.match(/[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/g) || [];
+  const cleanText = text.replace(/[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/g, " ");
+  // Estimate non-Chinese words (approx words * 1.3)
+  const words = cleanText.trim().split(/\s+/).filter(Boolean);
+  return chineseChars.length + Math.round(words.length * 1.3);
+}
+
+function updateTokenEstimate() {
+  const promptText = el("prompt").value;
+  let tokens = estimateTokens(promptText);
+  
+  if (state.imageData) {
+    tokens += 768; // llama.cpp image max tokens
+  }
+  
+  if (state.audioData) {
+    tokens += 200; // estimated audio tokens
+  }
+  
+  el("tokenEstimate").textContent = tokens;
+  
+  const limit = state.contextLimit;
+  if (tokens >= limit * 0.9) {
+    el("tokenEstimate").style.color = "var(--danger)";
+    el("tokenWarning").style.display = "block";
+  } else if (tokens >= limit * 0.7) {
+    el("tokenEstimate").style.color = "var(--accent-orange)";
+    el("tokenWarning").style.display = "none";
+  } else {
+    el("tokenEstimate").style.color = "var(--accent)";
+    el("tokenWarning").style.display = "none";
+  }
+}
+
+// ASR Repetition Filtering
+function filterASRRepetitions(text, isASR) {
+  if (!isASR) return { truncated: false, text };
+  
+  const len = text.length;
+  // Look for consecutive repeats of size 10 to 150 characters
+  for (let size = 10; size <= Math.min(150, len / 2); size++) {
+    const suffix = text.slice(-size);
+    const prev = text.slice(-2 * size, -size);
+    if (suffix === prev) {
+      let cleanText = text.slice(0, -size);
+      // Clean recursively if it repeated even more times
+      while (cleanText.slice(-size) === suffix) {
+        cleanText = cleanText.slice(0, -size);
+      }
+      return {
+        truncated: true,
+        text: cleanText.trim() + " ... [已自動截斷重複語句]"
+      };
+    }
+  }
+  
+  // Check for short repeats repeating 3+ times (e.g. 4-9 chars)
+  for (let size = 4; size < 10; size++) {
+    if (len >= size * 3) {
+      const suffix = text.slice(-size);
+      const prev1 = text.slice(-2 * size, -size);
+      const prev2 = text.slice(-3 * size, -2 * size);
+      if (suffix === prev1 && suffix === prev2) {
+        let cleanText = text.slice(0, -2 * size);
+        while (cleanText.slice(-size) === suffix) {
+          cleanText = cleanText.slice(0, -size);
+        }
+        return {
+          truncated: true,
+          text: cleanText.trim() + " ... [已自動截斷重複語句]"
+        };
+      }
+    }
+  }
+  
+  return { truncated: false, text };
+}
+
+// Test History Log Management
+const LOG_KEY = "xavier_bench_logs";
+let runHistory = JSON.parse(localStorage.getItem(LOG_KEY) || "[]");
+
+function saveHistory() {
+  localStorage.setItem(LOG_KEY, JSON.stringify(runHistory));
+  renderHistoryTable();
+}
+
+function addHistoryItem(preset, prompt, image, audio, latency, promptTok, outputTok, speed, output) {
+  const item = {
+    id: Date.now(),
+    time: new Date().toLocaleTimeString(),
+    date: new Date().toLocaleDateString(),
+    preset: preset,
+    prompt: prompt || "(None)",
+    media: [image, audio].filter(Boolean).join(", ") || "None",
+    latency: latency,
+    tokens: `${promptTok} / ${outputTok}`,
+    speed: speed,
+    output: output
+  };
+  runHistory.unshift(item);
+  saveHistory();
+}
+
+function renderHistoryTable() {
+  const tbody = el("logTableBody");
+  if (runHistory.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">尚無測試歷史紀錄。</td></tr>`;
+    return;
+  }
+  
+  tbody.innerHTML = runHistory.map(item => `
+    <tr>
+      <td>${item.date}<br><small>${item.time}</small></td>
+      <td><code>${item.preset}</code></td>
+      <td title="${item.prompt}">${item.prompt.length > 40 ? item.prompt.substring(0, 38) + '...' : item.prompt}</td>
+      <td>${item.media}</td>
+      <td>${item.latency}</td>
+      <td>${item.tokens}</td>
+      <td><strong>${item.speed}</strong></td>
+      <td>
+        <button class="btn btn-delete" onclick="deleteHistoryItem(${item.id})">刪除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+window.deleteHistoryItem = function(id) {
+  runHistory = runHistory.filter(item => item.id !== id);
+  saveHistory();
+};
+
+function clearLogs() {
+  if (confirm("確定要清除所有測試歷史紀錄嗎？")) {
+    runHistory = [];
+    saveHistory();
+  }
+}
+
+function exportLogs() {
+  if (runHistory.length === 0) {
+    alert("沒有可導出的測試記錄！");
+    return;
+  }
+  const blob = new Blob([JSON.stringify(runHistory, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `xavier_bench_logs_${Date.now()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// System Status and Config Loads
 function setHealth(ok, text, latency) {
   el("healthText").textContent = text;
   el("healthText").className = ok ? "ok" : "bad";
@@ -85,6 +266,15 @@ async function checkBackend() {
     setHealth(Boolean(health.ok), health.ok ? "ok" : "error", health.latency_ms);
     renderRaw(health);
 
+    if (health.slots && health.slots.length > 0) {
+      const activeSlot = health.slots[0];
+      if (activeSlot.n_ctx) {
+        state.contextLimit = activeSlot.n_ctx;
+        el("ctxLimit").textContent = activeSlot.n_ctx;
+        updateTokenEstimate();
+      }
+    }
+
     const models = await postJson("/api/models");
     const model = models?.data?.data?.[0]?.id;
     if (model) {
@@ -97,6 +287,7 @@ async function checkBackend() {
   }
 }
 
+// Media Preprocessing and loading
 function readDataUrl(file, callback) {
   const reader = new FileReader();
   reader.onload = () => callback(String(reader.result));
@@ -122,6 +313,7 @@ function clearImage() {
   el("preview").hidden = true;
   el("preview").removeAttribute("src");
   el("imageTitle").textContent = "選擇圖片";
+  updateTokenEstimate();
 }
 
 function clearAudio() {
@@ -134,6 +326,7 @@ function clearAudio() {
   el("audioPreview").hidden = true;
   el("audioPreview").removeAttribute("src");
   el("audioTitle").textContent = "選擇音訊";
+  updateTokenEstimate();
 }
 
 function convertWebpToPng(file, callback) {
@@ -179,6 +372,7 @@ function loadImage(file) {
       el("preview").hidden = false;
       el("imageTitle").textContent = file.name + " (已自動轉 PNG)";
       showMessage(`WebP 圖片已成功轉碼為 PNG：${file.name}`, "ok");
+      updateTokenEstimate();
     });
   } else {
     readDataUrl(file, (dataUrl) => {
@@ -188,6 +382,7 @@ function loadImage(file) {
       el("preview").hidden = false;
       el("imageTitle").textContent = file.name;
       showMessage(`圖片已載入：${file.name}`, "ok");
+      updateTokenEstimate();
     });
   }
 }
@@ -200,10 +395,8 @@ async function preprocessAudio(file) {
   const audioCtx = new AudioContext();
   const arrayBuffer = await file.arrayBuffer();
   
-  // Decode the file regardless of original format
   const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
   
-  // Resample to 16000 Hz, Mono
   const targetSampleRate = 16000;
   const offlineCtx = new OfflineAudioContext(1, Math.round(audioBuffer.duration * targetSampleRate), targetSampleRate);
   
@@ -215,7 +408,6 @@ async function preprocessAudio(file) {
   const resampledBuffer = await offlineCtx.startRendering();
   const pcmData = resampledBuffer.getChannelData(0);
   
-  // Peak Normalization (scale to -1dB peak / ~0.89 amplitude)
   let maxVal = 0;
   for (let i = 0; i < pcmData.length; i++) {
     const val = Math.abs(pcmData[i]);
@@ -228,7 +420,6 @@ async function preprocessAudio(file) {
     }
   }
   
-  // Encode Float32 PCM to 16-bit PCM WAV Blob
   return encodeWav(pcmData, targetSampleRate);
 }
 
@@ -247,12 +438,12 @@ function encodeWav(samples, sampleRate) {
   writeString(view, 8, 'WAVE');
   writeString(view, 12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM format
-  view.setUint16(22, 1, true); // Mono
+  view.setUint16(20, 1, true); 
+  view.setUint16(22, 1, true); 
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); // Byte rate
-  view.setUint16(32, 2, true); // Block align
-  view.setUint16(34, 16, true); // 16-bit
+  view.setUint32(28, sampleRate * 2, true); 
+  view.setUint16(32, 2, true); 
+  view.setUint16(34, 16, true); 
   writeString(view, 36, 'data');
   view.setUint32(40, samples.length * 2, true);
   
@@ -277,22 +468,22 @@ async function loadAudio(file) {
     reader.onload = () => {
       const dataUrl = String(reader.result);
       state.audioData = dataUrl.split(",", 2)[1] || "";
-      state.audioName = file.name + " (resampled)";
-      state.audioFormat = "wav"; // Resampled output is always wav
+      state.audioName = file.name;
+      state.audioFormat = "wav"; 
       
       if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
       state.audioUrl = URL.createObjectURL(wavBlob);
       el("audioPreview").src = state.audioUrl;
       el("audioPreview").hidden = false;
-      el("audioTitle").textContent = file.name + " (16kHz Mono WAV)";
+      el("audioTitle").textContent = file.name + " (已優化轉檔)";
       showMessage(`音訊預處理完成並已載入：${file.name}`, "ok");
+      updateTokenEstimate();
     };
     reader.readAsDataURL(wavBlob);
   } catch (err) {
     console.error(err);
     showMessage(`音訊解碼/預處理失敗 (${err.message})，改用直接載入模式...`, "warn");
     
-    // Fallback to direct load
     const format = audioFormatFor(file);
     if (!format) {
       showMessage(`不支援的音訊格式：${file.name}。llama.cpp input_audio 目前請使用 WAV 或 MP3。`);
@@ -308,10 +499,12 @@ async function loadAudio(file) {
       el("audioPreview").hidden = false;
       el("audioTitle").textContent = file.name;
       showMessage(`音訊已直接載入（未預處理）：${file.name}`, "ok");
+      updateTokenEstimate();
     });
   }
 }
 
+// Payload Construction
 function buildPayload() {
   const prompt = el("prompt").value.trim();
   const preset = el("preset").value;
@@ -330,9 +523,11 @@ function buildPayload() {
   };
 }
 
+// Run Test
 async function runTest(event) {
   event.preventDefault();
-  if (!state.imageData && !state.audioData && el("preset").value === "asr") {
+  const preset = el("preset").value;
+  if (!state.imageData && !state.audioData && preset === "asr") {
     showMessage("請先載入 WAV 或 MP3，再執行 ASR 測試。");
     return;
   }
@@ -344,8 +539,15 @@ async function runTest(event) {
   el("promptTokens").textContent = "-";
   el("outputTokens").textContent = "-";
   el("tokRate").textContent = "-";
+  el("repeatStatus").style.display = "none";
 
   const started = performance.now();
+  let choiceText = "";
+  let latencyText = "-";
+  let promptTokens = "-";
+  let completionTokens = "-";
+  let rateText = "-";
+  
   try {
     const payload = buildPayload();
     const res = await fetch("/api/chat", {
@@ -366,10 +568,10 @@ async function runTest(event) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
-    let choiceText = "";
     let lastData = null;
     let finalUsage = null;
     let finalTimings = null;
+    let isASRRepetitionDetected = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -377,7 +579,7 @@ async function runTest(event) {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
-      buffer = lines.pop(); // Keep incomplete line
+      buffer = lines.pop(); 
 
       for (const line of lines) {
         const cleaned = line.trim();
@@ -393,6 +595,18 @@ async function runTest(event) {
             const delta = parsed?.choices?.[0]?.delta;
             if (delta && delta.content) {
               choiceText += delta.content;
+              
+              // Run real-time repetition detection
+              const filterResult = filterASRRepetitions(choiceText, preset === "asr" || Boolean(state.audioData));
+              if (filterResult.truncated) {
+                choiceText = filterResult.text;
+                el("answer").textContent = choiceText;
+                el("repeatStatus").style.display = "inline-block";
+                isASRRepetitionDetected = true;
+                // Cancel reader and break
+                reader.cancel();
+                break;
+              }
               el("answer").textContent = choiceText;
             }
           } catch (e) {
@@ -400,32 +614,45 @@ async function runTest(event) {
           }
         }
       }
+      if (isASRRepetitionDetected) break;
     }
 
     const latency = Math.round(performance.now() - started);
-    el("responseTime").textContent = `${latency} ms`;
+    latencyText = `${latency} ms`;
+    el("responseTime").textContent = latencyText;
 
-    // Extract stats from usage or timings (llama.cpp specific)
     const usage = finalUsage || lastData?.usage || {};
     const timings = finalTimings || lastData?.timings || {};
 
-    const promptTokens = usage.prompt_tokens ?? timings.prompt_n ?? "-";
-    const completionTokens = usage.completion_tokens ?? timings.predicted_n ?? "-";
+    promptTokens = usage.prompt_tokens ?? timings.prompt_n ?? "-";
+    completionTokens = usage.completion_tokens ?? timings.predicted_n ?? "-";
     
-    // Prioritize backend timings for tok/s, fallback to client-calculated latency
-    let rate = "-";
     if (timings.predicted_per_second) {
-      rate = timings.predicted_per_second.toFixed(2);
+      rateText = timings.predicted_per_second.toFixed(2);
     } else if (completionTokens !== "-" && completionTokens !== 0 && latency) {
-      rate = (completionTokens / (latency / 1000)).toFixed(2);
+      rateText = (completionTokens / (latency / 1000)).toFixed(2);
     }
 
     el("promptTokens").textContent = promptTokens;
     el("outputTokens").textContent = completionTokens;
-    el("tokRate").textContent = rate;
+    el("tokRate").textContent = rateText;
 
     renderRaw(lastData || { ok: true });
     setHealth(true, "ok", latency);
+    
+    // Add to history
+    addHistoryItem(
+      preset,
+      el("prompt").value.trim(),
+      state.imageName,
+      state.audioName,
+      latencyText,
+      promptTokens,
+      completionTokens,
+      rateText,
+      choiceText
+    );
+
   } catch (error) {
     showMessage(String(error), "bad");
     renderRaw({ ok: false, error: String(error) });
@@ -437,39 +664,67 @@ async function runTest(event) {
 
 function wireDrop(zoneId, loader) {
   const zone = el(zoneId);
-  zone.addEventListener("dragover", (event) => event.preventDefault());
+  zone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    zone.style.borderColor = "var(--accent)";
+  });
+  zone.addEventListener("dragleave", () => {
+    zone.style.borderColor = "var(--border)";
+  });
   zone.addEventListener("drop", (event) => {
     event.preventDefault();
+    zone.style.borderColor = "var(--border)";
     loader(event.dataTransfer.files[0]);
   });
 }
 
-el("preset").addEventListener("change", () => {
-  const preset = el("preset").value;
-  el("prompt").value = presets[preset];
-  if (presetDefaults[preset]) {
-    el("maxTokens").value = presetDefaults[preset].maxTokens;
-  }
-});
-el("imageInput").addEventListener("change", (event) => loadImage(event.target.files[0]));
-el("audioInput").addEventListener("change", (event) => loadAudio(event.target.files[0]));
-el("clearImage").addEventListener("click", clearImage);
-el("clearAudio").addEventListener("click", clearAudio);
-el("clearAll").addEventListener("click", () => {
-  el("preset").value = "asr";
-  el("prompt").value = presets.asr;
-  el("maxTokens").value = presetDefaults.asr.maxTokens;
-  clearImage();
-  clearAudio();
-  renderRaw({});
-  el("answer").className = "answer";
-  el("answer").textContent = "準備測試。";
-});
-el("checkBtn").addEventListener("click", checkBackend);
-el("testForm").addEventListener("submit", runTest);
-wireDrop("imageDropzone", loadImage);
-wireDrop("audioDropzone", loadAudio);
+// Event Listeners Wire-up
+function initEvents() {
+  el("preset").addEventListener("change", () => {
+    const preset = el("preset").value;
+    el("prompt").value = presets[preset];
+    if (presetDefaults[preset]) {
+      el("maxTokens").value = presetDefaults[preset].maxTokens;
+    }
+    updateTokenEstimate();
+  });
+  
+  el("prompt").addEventListener("input", updateTokenEstimate);
+  el("imageInput").addEventListener("change", (event) => loadImage(event.target.files[0]));
+  el("audioInput").addEventListener("change", (event) => loadAudio(event.target.files[0]));
+  el("clearImage").addEventListener("click", clearImage);
+  el("clearAudio").addEventListener("click", clearAudio);
+  
+  el("clearAll").addEventListener("click", () => {
+    el("preset").value = "asr";
+    el("prompt").value = presets.asr;
+    el("maxTokens").value = presetDefaults.asr.maxTokens;
+    clearImage();
+    clearAudio();
+    renderRaw({});
+    el("answer").className = "answer";
+    el("answer").textContent = "準備測試。";
+    el("repeatStatus").style.display = "none";
+    updateTokenEstimate();
+  });
+  
+  el("checkBtn").addEventListener("click", checkBackend);
+  el("testForm").addEventListener("submit", runTest);
+  
+  el("btnExportLogs").addEventListener("click", exportLogs);
+  el("btnClearLogs").addEventListener("click", clearLogs);
+  
+  wireDrop("imageDropzone", loadImage);
+  wireDrop("audioDropzone", loadAudio);
+}
+
+// Init execution
+initTabs();
+initEvents();
+renderHistoryTable();
 
 el("prompt").value = presets.asr;
 el("maxTokens").value = presetDefaults.asr.maxTokens;
+updateTokenEstimate();
+
 loadConfig().then(checkBackend);
